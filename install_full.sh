@@ -50,11 +50,11 @@ chmod 600 $ROOT_DIR/credentials/google_tts.json
 
 # Crear archivo config
 cat > $ROOT_DIR/config.yaml <<EOF
-node_num: ""
+node_num: "$NODE_NUM"
 ami:
-  host: ""
-  user: ""
-  pass: ""
+  host: "$AMI_HOST"
+  user: "$AMI_USER"
+  pass: "$AMI_PASS"
 porcupine_ppn: /usr/local/asl_ai/porcupine/Jarvis_es.ppn
 vosk_model: /usr/local/asl_Aivosk/vosk-model-small-es-0.42
 sounds_dir: /var/lib/asterisk/sounds
