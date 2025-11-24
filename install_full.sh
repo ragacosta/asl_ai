@@ -124,7 +124,7 @@ os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = cfg.get('google_credentials')
 
 # Init
 logger.info('Inicializando Porcupine...')
-porcupine = Porcupine(key_phrase_paths=[WAKE_MODEL])
+porcupine = Porcupine(keyword_paths=[WAKE_MODEL])
 
 logger.info('Inicializando VOSK...')
 model = Model(VOSK_MODEL_PATH)
