@@ -1,1 +1,20 @@
-
+<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>ASL AI - Dashboard</title></head>
+  <body>
+    <h2>ASL AI - Dashboard</h2>
+    <div id="status">Cargando...</div>
+    <button onclick="playLast()">Reproducir última respuesta</button>
+    <pre id="logs">Cargando...</pre>
+    <script>
+      async function load(){
+        let r = await fetch('/api/status'); let s = await r.json();
+        document.getElementById('status').innerText = 'Nodo: '+s.node+' — Servicio: '+s.service;
+        let l = await fetch('/api/logs'); let lj = await l.json();
+        document.getElementById('logs').innerText = lj.logs;
+      }
+      function playLast(){ fetch('/api/play_last',{method:'POST'}); alert('Reproduciendo...'); }
+      load(); setInterval(load,5000);
+    </script>
+  </body>
+</html>
