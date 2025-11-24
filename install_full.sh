@@ -7,11 +7,11 @@ cd "$ROOT_DIR"
 
 echo "Instalador completo: IA + AllStarLink + Web UI + Monitoreo"
 
-NODE_NUM="627010"
-GOOGLE_JSON="/home/admin/google_tts.json"
-AMI_USER="admin"
-AMI_PASS="40318b527dfa"
-AMI_HOST="127.0.0.1"
+NODE_NUM=""
+GOOGLE_JSON=""
+AMI_USER=""
+AMI_PASS=""
+AMI_HOST=""
 
 # Verifica JSON
 if [ ! -f "$GOOGLE_JSON" ]; then
@@ -36,19 +36,19 @@ chmod 600 $ROOT_DIR/credentials/google_tts.json
 
 # Crear archivo config
 cat > $ROOT_DIR/config.yaml <<EOF
-node_num: "627010"
+node_num: ""
 ami:
-  host: "127.0.0.1"
-  user: "admin"
-  pass: "40318b527dfa"
+  host: ""
+  user: ""
+  pass: ""
 porcupine_ppn: /usr/local/asl_ai/porcupine/Jarvis_es.ppn
 vosk_model: /usr/local/asl_Aivosk/vosk-model-small-es-0.42
 sounds_dir: /var/lib/asterisk/sounds
 google_credentials: $ROOT_DIR/credentials/google_tts.json
 listen_rate: 16000
 chunk: 1024
-openweather_key: "c4657af02b7446b14dfbfd3be23ff474"
-chatgpt_key: "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"
+openweather_key: ""
+chatgpt_key: ""
 web_port: 8080
 EOF
 
