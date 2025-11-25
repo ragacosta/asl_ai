@@ -57,7 +57,7 @@ ami:
   pass: "$AMI_PASS"
 porcupine:
   access_key: ""
-  library_path: "/usr/local/lib/libpv_porcupine.so"
+  library_path: "/usr/local/asl_ai/venv/lib/python3.11/site-packages/pvporcupine/lib/raspberry-pi/cortex-a76-aarch64/libpv_porcupine.so"
   model_path: "/usr/local/asl_ai/porcupine/porcupine_params.pv"
   keyword_path: "/usr/local/asl_ai/porcupine/Jarvis_en.ppn"
 vosk_model: /usr/local/asl_ai/vosk/vosk-model-small-es-0.42
