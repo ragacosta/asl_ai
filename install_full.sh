@@ -55,7 +55,11 @@ ami:
   host: "$AMI_HOST"
   user: "$AMI_USER"
   pass: "$AMI_PASS"
-porcupine_ppn: /usr/local/asl_ai/porcupine/Jarvis_es.ppn
+porcupine:
+  access_key: ""
+  library_path: "/usr/local/lib/libpv_porcupine.so"
+  model_path: "/usr/local/asl_ai/porcupine/porcupine_params.pv"
+  keyword_path: "/usr/local/asl_ai/porcupine/alexa_es.ppn"
 vosk_model: /usr/local/asl_Aivosk/vosk-model-small-es-0.42
 sounds_dir: /var/lib/asterisk/sounds
 google_credentials: $ROOT_DIR/credentials/google_tts.json
@@ -114,7 +118,12 @@ with open('config.yaml','r') as f:
     cfg = yaml.safe_load(f)
 
 NODE_NUM = cfg.get('node_num')
-WAKE_MODEL = cfg.get('porcupine_ppn')
+porc_cfg = cfg.get('porcupine', {})
+WAKE_MODEL = porc_cfg.get('keyword_path')
+PORCUPINE_LIB_PATH = porc_cfg.get('library_path')
+PORCUPINE_MODEL_PATH = porc_cfg.get('model_path')
+PORCUPINE_ACCESS_KEY = porc_cfg.get('access_key')
+
 VOSK_MODEL_PATH = cfg.get('vosk_model')
 SOUNDS_DIR = cfg.get('sounds_dir')
 RATE = cfg.get('listen_rate',16000)
@@ -122,9 +131,32 @@ CHUNK = cfg.get('chunk',1024)
 
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = cfg.get('google_credentials')
 
-# Init
+# Init Porcupine (modern SDK requires access_key, library_path, model_path, keyword_paths, sensitivities)
+if not all([PORCUPINE_ACCESS_KEY, PORCUPINE_LIB_PATH, PORCUPINE_MODEL_PATH, WAKE_MODEL]):
+    logger.error('Porcupine configuration incomplete. Check config.yaml')
+    raise SystemExit('Porcupine configuration incomplete. Check config.yaml')
+
+if not os.path.isfile(PORCUPINE_LIB_PATH):
+    logger.error('Porcupine library not found at %s', PORCUPINE_LIB_PATH)
+    raise FileNotFoundError(f'Porcupine library not found: {PORCUPINE_LIB_PATH}')
+
+if not os.path.isfile(PORCUPINE_MODEL_PATH):
+    logger.error('Porcupine model not found at %s', PORCUPINE_MODEL_PATH)
+    raise FileNotFoundError(f'Porcupine model not found: {PORCUPINE_MODEL_PATH}')
+
+if not os.path.isfile(WAKE_MODEL):
+    logger.error('Porcupine keyword file not found at %s', WAKE_MODEL)
+    raise FileNotFoundError(f'Porcupine keyword file not found: {WAKE_MODEL}')
+
 logger.info('Inicializando Porcupine...')
-porcupine = Porcupine(keyword_paths=[WAKE_MODEL])
+
+porcupine = Porcupine(
+    access_key=PORCUPINE_ACCESS_KEY,
+    library_path=PORCUPINE_LIB_PATH,
+    model_path=PORCUPINE_MODEL_PATH,
+    keyword_paths=[WAKE_MODEL],
+    sensitivities=[0.6]
+)
 
 logger.info('Inicializando VOSK...')
 model = Model(VOSK_MODEL_PATH)
@@ -189,7 +221,6 @@ def handle_intent(texto):
                 return 'No pude consultar el clima ahora.'
         else:
             return 'No tengo configurada la API de clima. Configura OPENWEATHER_KEY.'
-    # Fallback: echo
     return 'Comando recibido: ' + texto
 
 def main_loop():
@@ -408,5 +439,6 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable asl-ai.service
 sudo systemctl enable asl-ai-web.service
-
+echo "-- Recuerda copiar libpv_porcupine.so a /usr/local/lib/ (o la ruta que uses) --"
+echo "-- Recuerda poner porcupine_params.pv y tu .ppn en /usr/local/asl_ai/porcupine/ --"
 echo "Instalación base completada. Edita /usr/local/asl_ai/config.yaml si es necesario y coloca tu wake-word .ppn en /usr/local/asl_ai/porcupine/"
