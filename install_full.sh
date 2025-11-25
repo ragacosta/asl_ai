@@ -60,6 +60,7 @@ porcupine:
   library_path: "/usr/local/asl_ai/venv/lib/python3.11/site-packages/pvporcupine/lib/raspberry-pi/cortex-a76-aarch64/libpv_porcupine.so"
   model_path: "/usr/local/asl_ai/porcupine/porcupine_params.pv"
   keyword_path: "/usr/local/asl_ai/porcupine/Jarvis_en.ppn"
+  sensetivites: "0.5"
 vosk_model: /usr/local/asl_ai/vosk/vosk-model-small-es-0.42
 sounds_dir: /var/lib/asterisk/sounds
 google_credentials: $ROOT_DIR/credentials/google_tts.json
