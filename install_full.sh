@@ -193,181 +193,167 @@ fi
 cat > "$ROOT_DIR/asl_ai_core.py" <<'PY'
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
+
 import os, time, json, subprocess, logging, yaml
-from vosk import Model, KaldiRecognizer
-try:
-    from pvporcupine import Porcupine
-except Exception:
-    Porcupine = None
 import pyaudio
+from vosk import Model, KaldiRecognizer
+from pvporcupine import Porcupine
 from google.cloud import texttospeech
 from prometheus_client import Counter, Gauge, start_http_server
-import requests
 from logging.handlers import RotatingFileHandler
 
-logger = logging.getLogger('asl_ai')
+# -------------------------------------------------------------------
+# LOGGING
+# -------------------------------------------------------------------
+logger = logging.getLogger("asl_ai")
 logger.setLevel(logging.INFO)
-fh = RotatingFileHandler('/var/log/asl_ai.log', maxBytes=5*1024*1024, backupCount=5)
-fmt = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+fh = RotatingFileHandler("/var/log/asl_ai.log", maxBytes=5*1024*1024, backupCount=5)
+fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
 fh.setFormatter(fmt)
 logger.addHandler(fh)
 
+logger.info("ASL_AI CORE iniciar con autodetección de audio…")
+
+# -------------------------------------------------------------------
+# MÉTRICAS
+# -------------------------------------------------------------------
 REQ_COUNTER = Counter('asl_ai_requests_total', 'Total requests received via wakeword')
 ERR_COUNTER = Counter('asl_ai_errors_total', 'Total errors')
 LAST_REQ = Gauge('asl_ai_last_request_timestamp', 'Timestamp of last request')
 
-with open('config.yaml','r') as f:
+# -------------------------------------------------------------------
+# CONFIG
+# -------------------------------------------------------------------
+with open('/usr/local/asl_ai/config.yaml', 'r') as f:
     cfg = yaml.safe_load(f)
 
 NODE_NUM = cfg.get('node_num')
-porc_cfg = cfg.get('porcupine', {})
-WAKE_MODEL = porc_cfg.get('keyword_path')
-PORCUPINE_LIB_PATH = porc_cfg.get('library_path')
-PORCUPINE_MODEL_PATH = porc_cfg.get('model_path')
-PORCUPINE_ACCESS_KEY = porc_cfg.get('access_key')
-
 VOSK_MODEL_PATH = cfg.get('vosk_model')
 SOUNDS_DIR = cfg.get('sounds_dir')
-RATE = cfg.get('listen_rate',16000)
-CHUNK = cfg.get('chunk',1024)
+RATE = cfg.get('listen_rate', 16000)
+CHUNK = cfg.get('chunk', 1024)
 
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = cfg.get('google_credentials')
 
-if Porcupine is None:
-    logger.error('pvporcupine no está disponible. Revisa la instalación.')
-else:
-    if not all([PORCUPINE_ACCESS_KEY, PORCUPINE_LIB_PATH, PORCUPINE_MODEL_PATH, WAKE_MODEL]):
-        logger.error('Porcupine configuración incompleta en config.yaml; Porcupine no será inicializado.')
-    else:
-        if not os.path.isfile(PORCUPINE_LIB_PATH):
-            logger.error('Porcupine library not found at %s', PORCUPINE_LIB_PATH)
-        elif not os.path.isfile(PORCUPINE_MODEL_PATH):
-            logger.error('Porcupine model not found at %s', PORCUPINE_MODEL_PATH)
-        elif not os.path.isfile(WAKE_MODEL):
-            logger.error('Porcupine keyword file not found at %s', WAKE_MODEL)
-        else:
-            logger.info('Inicializando Porcupine...')
-            porcupine = Porcupine(
-                access_key=PORCUPINE_ACCESS_KEY,
-                library_path=PORCUPINE_LIB_PATH,
-                model_path=PORCUPINE_MODEL_PATH,
-                keyword_paths=[WAKE_MODEL],
-                sensitivities=[float(porc_cfg.get('sensitivities', porc_cfg.get('sensitivity', 0.6)))]
-            )
+# Porcupine
+porc_cfg = cfg.get('porcupine', {})
+porcupine = Porcupine(
+    access_key=porc_cfg['access_key'],
+    library_path=porc_cfg['library_path'],
+    model_path=porc_cfg['model_path'],
+    keyword_paths=[porc_cfg['keyword_path']],
+    sensitivities=[0.6]
+)
 
-logger.info('Inicializando VOSK...')
+# Vosk
 model = Model(VOSK_MODEL_PATH)
 recognizer = KaldiRecognizer(model, RATE)
 
-pa = pyaudio.PyAudio()
-stream = pa.open(rate=RATE, channels=1, format=pyaudio.paInt16, input=True, frames_per_buffer=CHUNK)
-
 tts_client = texttospeech.TextToSpeechClient()
 
-start_http_server(8001)
-logger.info('Prometheus metrics on :8001')
+# -------------------------------------------------------------------
+# AUTODETECCIÓN DE MICRÓFONO USB
+# -------------------------------------------------------------------
+def detectar_microfono():
+    """
+    Busca una tarjeta de captura USB válida y devuelve:
+    - index PyAudio
+    - channels
+    - rate usable
+    - formato PyAudio
+    """
+    pa = pyaudio.PyAudio()
+    logger.info("Buscando micrófono USB…")
 
-def generar_audio_tts(texto, out_path='/tmp/tts_8k.wav'):
-    try:
-        synthesis_input = texttospeech.SynthesisInput(text=texto)
-        voice = texttospeech.VoiceSelectionParams(language_code='es-MX', name='es-MX-Standard-B')
-        audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.LINEAR16)
-        response = tts_client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
-        tmp = '/tmp/tts.wav'
-        with open(tmp,'wb') as f:
-            f.write(response.audio_content)
-        subprocess.run(['sox', tmp, '-r', '8000', '-c', '1', out_path], check=True)
-        return out_path
-    except Exception:
-        logger.exception('TTS failure')
-        ERR_COUNTER.inc()
-        return None
+    dispositivos = []
+    for i in range(pa.get_device_count()):
+        info = pa.get_device_info_by_index(i)
+        name = info.get('name', '').lower()
+        host = info.get('hostApi')
+        max_in = info.get('maxInputChannels')
 
-def reproducir_allstar(wav_path, name='ai_resp'):
-    try:
-        dest = os.path.join(SOUNDS_DIR, f"{name}.wav")
-        subprocess.run(['sudo','cp', wav_path, dest], check=True)
-        subprocess.run(['asterisk','-rx', f'rpt playback {NODE_NUM} {name}'], check=True)
-        logger.info('Reproduced on node %s', NODE_NUM)
-    except Exception:
-        logger.exception('Playback error')
-        ERR_COUNTER.inc()
+        dispositivos.append(info)
 
-OPENWEATHER_KEY = os.environ.get('OPENWEATHER_KEY') or cfg.get('openweather_key')
+        if max_in > 0:
+            logger.info(f"Dispositivo encontrado: {i} → {info}")
 
-def handle_intent(texto):
-    texto = texto.lower()
-    if 'temperatura' in texto or 'clima' in texto:
-        ciudad = 'Ciudad de México'
-        if 'en' in texto:
-            try:
-                ciudad = texto.split('en')[-1].strip()
-            except:
-                pass
-        if OPENWEATHER_KEY:
-            try:
-                r = requests.get('https://api.openweathermap.org/data/2.5/weather',
-                                 params={'q': ciudad, 'appid': OPENWEATHER_KEY, 'units':'metric','lang':'es'}, timeout=5)
-                j = r.json()
-                temp = j['main']['temp']
-                desc = j['weather'][0]['description']
-                return f'La temperatura en {ciudad} es de {int(temp)} grados Celsius y {desc}.'
-            except Exception:
-                logger.exception('OpenWeather error')
-                return 'No pude consultar el clima ahora.'
-        else:
-            return 'No tengo configurada la API de clima. Configura OPENWEATHER_KEY.'
-    return 'Comando recibido: ' + texto
+    # Filtrar por entradas válidas
+    candidatos = [d for d in dispositivos if d['maxInputChannels'] > 0]
 
-def main_loop():
-    logger.info('Starting main loop')
-    while True:
+    if not candidatos:
+        logger.error("❌ No se encontró ningún micrófono")
+        raise RuntimeError("No hay micrófono disponible")
+
+    # Prioridad: USB y con 1–2 canales
+    for d in candidatos:
+        name = d['name'].lower()
+        if "usb" in name or "c-media" in name or "microphone" in name:
+            logger.info(f"Micrófono elegido: {d}")
+            idx = d['index']
+
+            # canales
+            canales = 1 if d['maxInputChannels'] >= 1 else d['maxInputChannels']
+            logger.info(f"Canales seleccionados: {canales}")
+
+            formato = pyaudio.paInt16  # USB Audio Class 1 siempre soporta S16_LE
+            tasa = RATE
+
+            return idx, canales, tasa, formato
+
+    # Si no encontró USB, elegir el primero válido
+    d = candidatos[0]
+    idx = d['index']
+    canales = 1
+    formato = pyaudio.paInt16
+    tasa = RATE
+
+    logger.info(f"Micrófono elegido fallback: {d}")
+    return idx, canales, tasa, formato
+
+
+# -------------------------------------------------------------------
+# CREAR STREAM DE AUDIO CON AUTODETECCIÓN ERROR-PROOF
+# -------------------------------------------------------------------
+def crear_stream_autodetect():
+    pa = pyaudio.PyAudio()
+
+    idx, canales, tasa, formato = detectar_microfono()
+
+    modos = [
+        {"device": idx, "description": f"PyAudio device_index {idx}"},
+        {"device": None, "description": "default (NULL device)"}
+    ]
+
+    for modo in modos:
         try:
-            if 'porcupine' in globals():
-                pcm = stream.read(CHUNK, exception_on_overflow=False)
-                res = porcupine.process(pcm)
-                if res >= 0:
-                    logger.info('Wake word detected')
-                    REQ_COUNTER.inc()
-                    LAST_REQ.set_to_current_time()
-                    frames = [pcm]
-                    for _ in range(int(RATE/CHUNK*4)):
-                        frames.append(stream.read(CHUNK, exception_on_overflow=False))
-                    raw = '/tmp/cmd.raw'
-                    with open(raw,'wb') as f:
-                        for fr in frames:
-                            f.write(fr)
-                    wavfile = '/tmp/cmd.wav'
-                    subprocess.run(['sox','-t','raw','-r',str(RATE),'-e','signed','-b','16','-c','1',raw,wavfile], check=True)
-                    with open(wavfile,'rb') as f:
-                        data = f.read()
-                    if recognizer.AcceptWaveform(data):
-                        r = json.loads(recognizer.Result())
-                    else:
-                        r = json.loads(recognizer.FinalResult())
-                    texto = r.get('text','')
-                    logger.info('Recognized: %s', texto)
-                    respuesta = handle_intent(texto)
-                    wav = generar_audio_tts(respuesta)
-                    if wav:
-                        reproducir_allstar(wav)
-            else:
-                # Si Porcupine no está disponible, hacemos un simple reconocimiento continuo con VOSK
-                pcm = stream.read(CHUNK, exception_on_overflow=False)
-                if recognizer.AcceptWaveform(pcm):
-                    r = json.loads(recognizer.Result())
-                else:
-                    r = json.loads(recognizer.FinalResult())
-                texto = r.get('text','')
-                if texto:
-                    logger.info('Recognized (VOSK continuous): %s', texto)
-        except Exception:
-            logger.exception('Main loop error')
-            ERR_COUNTER.inc()
-            time.sleep(1)
+            logger.info(f"Intentando abrir modo audio: {modo['description']}")
 
-if __name__ == '__main__':
-    main_loop()
+            stream = pa.open(
+                rate=tasa,
+                channels=canales,
+                format=formato,
+                input=True,
+                input_device_index=modo["device"],
+                frames_per_buffer=CHUNK
+            )
+
+            logger.info(f"✔ Audio abierto OK en modo: {modo['description']}")
+            return pa, stream, canales, tasa
+
+        except Exception as e:
+            logger.error(f"❌ Falló modo {modo['description']}: {e}")
+
+    logger.critical("❌ No se pudo abrir NINGÚN modo de audio.")
+    raise RuntimeError("Fallo crítico en audio")
+
+
+pa, stream, CH, RATE = crear_stream_autodetect()
+
+
+# -------------------------------------------------------------------
+# TTS
+# -------------
+
 PY
 
 cat > "$ROOT_DIR/ami_listener.py" <<'PY'
