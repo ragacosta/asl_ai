@@ -656,7 +656,7 @@ PY
 cat > /etc/systemd/system/asl-ai.service <<EOF
 [Unit]
 Description=IA AllStarLink Core
-After=network.tarjet sound.target
+After=network.target sound.target
 
 [Service]
 Type=simple
