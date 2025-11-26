@@ -315,39 +315,74 @@ def detectar_microfono():
 # CREAR STREAM DE AUDIO CON AUTODETECCIÓN ERROR-PROOF
 # -------------------------------------------------------------------
 def crear_stream_autodetect():
+    """
+    Intenta abrir un stream de captura robusto probando:
+      - todos los dispositivos con maxInputChannels > 0
+      - diferentes sample rates comunes
+      - 1 o 2 canales
+      - hw -> plughw -> default (None)
+    Devuelve: (pa, stream, canales, rate)
+    Lanza RuntimeError si no se puede abrir nada.
+    """
     pa = pyaudio.PyAudio()
+    logger.info("Iniciando creación robusta de stream (autodetect)...")
 
-    idx, canales, tasa, formato = detectar_microfono()
+    # Detectar dispositivos con capacidad de entrada
+    dispositivos = []
+    for i in range(pa.get_device_count()):
+        info = pa.get_device_info_by_index(i)
+        if info.get('maxInputChannels', 0) > 0:
+            di = {
+                'index': i,
+                'name': info.get('name'),
+                'maxInputChannels': int(info.get('maxInputChannels', 0))
+            }
+            dispositivos.append(di)
+            logger.info(f"  Candidate device {i}: {di['name']} (maxIn={di['maxInputChannels']})")
 
-    modos = [
-        {"device": idx, "description": f"PyAudio device_index {idx}"},
-        {"device": None, "description": "default (NULL device)"}
-    ]
+    # Si no hay dispositivos, intentar default
+    if not dispositivos:
+        logger.warning("No se detectaron dispositivos con maxInputChannels > 0. Intentando default.")
+        dispositivos = [{'index': None, 'name': 'default', 'maxInputChannels': 1}]
 
-    for modo in modos:
-        try:
-            logger.info(f"Intentando abrir modo audio: {modo['description']}")
+    # Rates y channels a probar (ordenados por probabilidad de éxito para VOSK)
+    candidate_rates = [16000, 8000, 44100, 48000]
+    candidate_channels = [1, 2]
 
-            stream = pa.open(
-                rate=tasa,
-                channels=canales,
-                format=formato,
-                input=True,
-                input_device_index=modo["device"],
-                frames_per_buffer=CHUNK
-            )
+    # Métodos de apertura: primero device index real, luego None (default)
+    modos_apertura = []
+    for d in dispositivos:
+        modos_apertura.append({'device': d['index'], 'descr': f"device_index={d['index']} ({d['name']})", 'maxch': d['maxInputChannels']})
+    modos_apertura.append({'device': None, 'descr': 'default', 'maxch': 1})
 
-            logger.info(f"✔ Audio abierto OK en modo: {modo['description']}")
-            return pa, stream, canales, tasa
+    last_error = None
+    for modo in modos_apertura:
+        dev = modo['device']
+        maxch = modo.get('maxch', 1)
+        for ch in candidate_channels:
+            if ch > maxch:
+                # si dispositivo no soporta tantos canales, intentar de todos modos — ALSA puede convertir
+                pass
+            for rate in candidate_rates:
+                try:
+                    logger.info(f"Intentando abrir device={dev} channels={ch} rate={rate}")
+                    stream = pa.open(
+                        rate=rate,
+                        channels=ch,
+                        format=pyaudio.paInt16,
+                        input=True,
+                        input_device_index=dev,
+                        frames_per_buffer=CHUNK
+                    )
+                    logger.info(f"✔ Audio abierto OK: device={dev} channels={ch} rate={rate}")
+                    return pa, stream, ch, rate
+                except Exception as e:
+                    last_error = e
+                    logger.debug(f"Fallo apertura device={dev} ch={ch} rate={rate}: {e}")
 
-        except Exception as e:
-            logger.error(f"❌ Falló modo {modo['description']}: {e}")
-
-    logger.critical("❌ No se pudo abrir NINGÚN modo de audio.")
-    raise RuntimeError("Fallo crítico en audio")
-
-
-pa, stream, CH, RATE = crear_stream_autodetect()
+    # Si llegamos aquí, no se pudo abrir nada
+    logger.critical("No se pudo abrir NINGÚN stream de audio. Último error: %s", last_error)
+    raise RuntimeError("Fallo crítico en audio: no se pudo abrir ningún stream")
 
 
 # -------------------------------------------------------------------
