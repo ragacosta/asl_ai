@@ -502,7 +502,7 @@ def play_last():
     subprocess.run(['asterisk','-rx',f'rpt playback {cfg.get("node_num")} ai_resp'])
     return jsonify({'ok': True})
 if __name__=='__main__':
-    app.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=8083)
 PY
 
 # Crear systemd services con el usuario seleccionado
